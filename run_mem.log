@@ -1,0 +1,5 @@
+2025-09-20 20:29:24 Starting RAM monitor: update every 60s, graphs every 300s
+2025-09-20 20:29:24 OK update memused=26170.94MB
+2025-09-20 20:29:24 Generating graphs…
+2025-09-20 20:29:25 Graphs written to /Users/martinficek/rrd/PKS2_proj/graphs (open /Users/martinficek/rrd/PKS2_proj/graphs/index.html)
+2025-09-20 20:30:00 OK update memused=25998.25MB

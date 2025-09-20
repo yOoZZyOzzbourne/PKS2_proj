@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<title>Projekt 1 – RRDTool: Využití paměti (RAM)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --fg:#111; --muted:#666; --bg:#fff; --line:#e5e7eb; }
+  *{box-sizing:border-box} body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  margin:0; color:var(--fg); background:var(--bg)}
+  header{padding:28px 20px; border-bottom:1px solid var(--line)}
+  main{max-width:960px; margin:0 auto; padding:24px 20px}
+  h1{margin:0 0 6px; font-size:28px}
+  h2{margin-top:28px}
+  pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+  pre{background:#0b102026; padding:14px; border-radius:10px; overflow:auto}
+  .grid{display:grid; grid-template-columns:1fr; gap:24px}
+  .card{border:1px solid var(--line); border-radius:12px; padding:14px; background:#fff}
+  .hint{color:var(--muted); font-size:14px}
+  img{max-width:100%; height:auto; border-radius:10px; border:1px solid var(--line)}
+  .step{border-left:4px solid #94a3b8; padding-left:12px; margin:18px 0}
+  footer{border-top:1px solid var(--line); color:var(--muted); padding:16px 20px; text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>Projekt 1 – RRDTool: Využití paměti (RAM)</h1>
+  <div class="hint">Výstup: 3 grafy (hodinový, denní, týdenní) a statický web s návodem.</div>
+</header>
+<main>
+
+<section>
+  <h2>Hotové grafy</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Poslední hodina</h3>
+      <img src="../graphs/mem_hour.png" alt="RAM poslední hodina" onerror="this.outerHTML='<p class=&quot;hint&quot;>Soubor <code>mem_hour.png</code> zatím neexistuje. Spusťte generování grafů.</p>'">
+    </div>
+    <div class="card">
+      <h3>Poslední den</h3>
+      <img src="../graphs/mem_day.png" alt="RAM poslední den" onerror="this.outerHTML='<p class=&quot;hint&quot;>Soubor <code>mem_day.png</code> zatím neexistuje.</p>'">
+    </div>
+    <div class="card">
+      <h3>Poslední týden</h3>
+      <img src="../graphs/mem_week.png" alt="RAM poslední týden" onerror="this.outerHTML='<p class=&quot;hint&quot;>Soubor <code>mem_week.png</code> zatím neexistuje.</p>'">
+    </div>
+  </div>
+  <p class="hint">Statická stránka se sama neaktualizuje. Po vygenerování nových PNG stačí stránku znovu načíst (⌘R).</p>
+</section>
+
+<section>
+  <h2>Návod – jak jsem to postavil</h2>
+
+  <div class="step">
+    <h3>1) Instalace RRDTool (macOS)</h3>
+    <pre><code>brew install rrdtool</code></pre>
+  </div>
+
+  <div class="step">
+    <h3>2) Vytvoření RRD databáze pro RAM</h3>
+    <pre><code>mkdir -p ~/rrd
+cd ~/rrd
+rrdtool create mem.rrd \
+  --step 60 \
+  DS:memused:GAUGE:300:0:U \
+  RRA:AVERAGE:0.5:1:1440 \
+  RRA:AVERAGE:0.5:5:2016 \
+  RRA:AVERAGE:0.5:30:8640</code></pre>
+    <p class="hint">Krok 60s = 1 hodnota za minutu. Heartbeat 300s = toleruje až 5 min zpoždění.</p>
+  </div>
+
+  <div class="step">
+    <h3>3) Sběr dat (skript <code>update_mem</code>)</h3>
+
+    <h4>Viewing Virtual Memory Statistics</h4>
+    <p>The vm_stat tool displays high-level statistics about the current virtual memory usage of the system. By default, vm_stat displays these statistics once, but you can specify an interval value (in seconds) to update these statistics continuously. For information on the usage of this tool, see the vm_stat man page.</p>
+
+    <p>Listing 1 shows an example of the output from vm_stat.</p>
+
+    <h5>Listing 1 - Output of vm_stat tool</h5>
+    <pre><code>Mach Virtual Memory Statistics: (page size of 4096 bytes)
+Pages free:                     3194.
+Pages active:                  34594.
+Pages inactive:                17870.
+Pages wired down:               9878.
+"Translation faults":        6333197.
+Pages copy-on-write:           81385.
+Pages zero filled:           3180051.
+Pages reactivated:            343961.
+Pageins:                       33043.
+Pageouts:                      78496.
+Object cache: 66227 hits of 96952 lookups (68% hit rate)</code></pre>
+
+    <pre><code>#!/usr/bin/env bash
+# Save as ~/rrd/update_mem.sh; gives "used RAM" value in MB
+
+# Get page size (usually 4096 bytes on macOS)
+page_size=$(sysctl -n hw.pagesize)
+
+# Get free memory pages
+free=$(vm_stat | awk '/Pages free/ {
+  gsub(/\./,"",$3); print $3
+}')
+
+# Get active memory pages (currently in use)
+active=$(vm_stat | awk '/Pages active/ {
+  gsub(/\./,"",$3); print $3
+}')
+
+# Get inactive memory pages (cached but not active)
+inactive=$(vm_stat | awk '/Pages inactive/ {
+  gsub(/\./,"",$3); print $3
+}')
+
+# Get speculative memory pages (cached speculatively)
+spec=$(vm_stat | awk '/Pages speculative/ {
+  gsub(/\./,"",$3); print $3
+}')
+
+# Get wired memory pages (kernel memory, cannot be swapped)
+wired=$(vm_stat | awk '/Pages wired down/ {
+  gsub(/\./,"",$4); print $4
+}')
+
+# Calculate total used pages
+used_pages=$((active + inactive + wired + spec))
+
+# Convert pages to bytes
+used_bytes=$((used_pages * page_size))
+
+# Convert bytes to MB with 2 decimal places
+used_mb=$(awk -v b="$used_bytes" 'BEGIN{
+  printf "%.2f", b/1024/1024
+}')
+
+# Update RRD database with current timestamp and memory value
+rrdtool update ~/rrd/mem.rrd N:$used_mb</code></pre>
+    <p class="hint">Spouštím každých 60 s. Pro kontinuální běh: <code>caffeinate bash -c 'while true; do ~/rrd/update_mem.sh; sleep 60; done'</code></p>
+
+    <h4>Linux/Ubuntu Version</h4>
+    <p>On Linux systems, memory information is available through <code>/proc/meminfo</code>:</p>
+    <pre><code>#!/usr/bin/env bash
+# Linux version - reads from /proc/meminfo
+
+# Get total and available memory in KB
+total_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+available_kb=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
+
+# Calculate used memory in KB
+used_kb=$((total_kb - available_kb))
+
+# Convert to MB with 2 decimal places
+used_mb=$(awk -v used="$used_kb" 'BEGIN{
+  printf "%.2f", used/1024
+}')
+
+# Update RRD database
+rrdtool update ~/rrd/mem.rrd N:$used_mb</code></pre>
+    <p class="hint">Linux note: MemAvailable is more accurate than MemFree as it includes reclaimable memory from caches and buffers.</p>
+  </div>
+
+  <div class="step">
+    <h3>4) Generování grafů (hodina / den / týden)</h3>
+    <pre><code>mkdir -p ~/rrd/graphs
+
+# hodina
+rrdtool graph ~/rrd/graphs/mem_hour.png --start -1h --end now \
+  --title "Memory - Last Hour" --vertical-label "GB used" \
+  DEF:memmb=~/rrd/mem.rrd:memused:AVERAGE CDEF:memgb=memmb,1024,/ \
+  LINE2:memgb#0072F0:"Memory (GB)"
+
+# den
+rrdtool graph ~/rrd/graphs/mem_day.png --start -1d --end now \
+  --title "Memory - Last Day" --vertical-label "GB used" \
+  DEF:memmb=~/rrd/mem.rrd:memused:AVERAGE CDEF:memgb=memmb,1024,/ \
+  LINE2:memgb#00A651:"Memory (GB)"
+
+# týden
+rrdtool graph ~/rrd/graphs/mem_week.png --start -1w --end now \
+  --title "Memory - Last Week" --vertical-label "GB used" \
+  DEF:memmb=~/rrd/mem.rrd:memused:AVERAGE CDEF:memgb=memmb,1024,/ \
+  LINE2:memgb#E53935:"Memory (GB)"</code></pre>
+  </div>
+
+  <div class="step">
+    <h3>5) Otevření webu</h3>
+    <pre><code>open ~/rrd/site/index.html</code></pre>
+    <p class="hint">Obrázky se načítají z <code>../graphs/</code>. Po vygenerování nových PNG stačí refresh.</p>
+  </div>
+
+  <div class="step">
+    <h3>Tipy &amp; řešení problémů</h3>
+    <ul>
+      <li>Prázdná místa (NaN) znamenají, že ve 60s intervalu nedorazila hodnota. Udržte Mac vzhůru: <code>caffeinate ...</code></li>
+      <li>Poslední hodnota: <code>rrdtool lastupdate ~/rrd/mem.rrd</code></li>
+      <li>Textová data za 10 min: <code>rrdtool fetch ~/rrd/mem.rrd AVERAGE --start -10m --end now</code></li>
+      <li>Úklid: smazat vše lze prostě <code>rm -rf ~/rrd</code></li>
+    </ul>
+  </div>
+</section>
+
+<hr>
+<section>
+  <h2>Zdroje</h2>
+  <ul>
+    <li><a href="https://developer.apple.com/library/archive/documentation/Performance/Conceptual/ManagingMemory/Articles/VMPages.html">Apple Developer Documentation - Virtual Memory Pages</a></li>
+  </ul>
+</section>
+
+<section>
+  <h2>EN (short)</h2>
+  <p>This is a static, offline page. PNG graphs are generated by RRDTool and shown here. Refresh the page after you regenerate images.</p>
+</section>
+
+</main>
+<footer>© Projekt 1 – RRDTool RAM • Statická stránka bez automatické aktualizace</footer>
+</body>
+</html>
